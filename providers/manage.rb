@@ -36,6 +36,10 @@ rescue NameError
   return false
 end
 
+def coupa_pay?
+  node['coupa-base']['deployment'].match(/pay/) ? true : false
+end
+
 def customelogger(is_user_exists_on_system, is_user_session_active, custom_action, username, expiration_date)
   require 'logger'
   logger = Logger.new("/var/log/secure-ssh.json")
@@ -153,6 +157,14 @@ action :create do
 
       next unless is_user_active && is_action_create && is_deployment_match && is_role_match
       security_group << u['username'] if u['groups'].include?(new_resource.group_name)
+
+      cookbook_file "/home/#{u['username']}/.bash_profile" do
+        source 'bash_profile'
+        owner u['username']
+        group u['username']
+        mode 644
+        only_if { coupa_pay? }
+      end
 
     	if home_dir != "/dev/null"
     	  converge_by("would create #{home_dir}/.ssh") do
