@@ -40,7 +40,17 @@ def coupa_pay?
   node['coupa-base']['deployment'].match(/pay/) ? true : false
 end
 
-def customelogger(is_user_exists_on_system, is_user_session_active, custom_action, username, expiration_date)
+def execute_command(cmd = nil)
+  require 'open3'
+  out, st = Open3.capture2e(cmd)
+  if st.success?
+    out
+  else
+    false
+  end
+end
+
+def customelogger(is_user_exists_on_system, is_user_session_active, custom_action, username, expiration_date = nil)
   require 'logger'
   logger = Logger.new("/var/log/secure-ssh.json")
   logger.formatter = proc do |severity, datetime, progname, msg|
@@ -131,9 +141,8 @@ action :create do
       end
 
       # checking if user session is active
-      is_user_session_active = `who | grep #{u['username']} | awk '{print $1}'`.split("\n").count >= 1
-      %x[ id #{u['username']} ]
-      is_user_exists_on_system = $?.success?
+      is_user_session_active = execute_command("who | grep #{u['username']} | awk '{print $1}'").split("\n").count >= 1
+      is_user_exists_on_system = execute_command("id #{u['username']}") ? true : false
 
       customelogger(is_user_exists_on_system, is_user_session_active, custom_action, u['username'], u['expiration_date'])
 
@@ -152,7 +161,7 @@ action :create do
         end
         home home_dir
         action custom_action
-        not_if { is_user_session_active && !is_action_create }
+        not_if { is_user_session_active && !custom_action.to_s.eql?('create') }
       end
 
       next unless is_user_active && is_action_create && is_deployment_match && is_role_match
@@ -211,4 +220,29 @@ action :create do
     end
     members security_group
   end
+
+end
+
+action :remove_non_payment_groups do
+  valid_users = []
+  available_users = data_bag('users')
+  data_bag('groups').each do |group|
+    (valid_users << search(new_resource.data_bag, "groups:#{group} AND NOT action:remove").map {|u| u['id']}).flatten!
+  end
+  invalid_users = (available_users - valid_users.uniq)
+  unless invalid_users.empty?
+    invalid_users.each { |user|
+      is_user_exists_on_system = execute_command("id #{user}") ? true : false
+      next unless is_user_exists_on_system
+      is_user_session_active = execute_command("who | grep #{user} | awk '{print $1}'").split("\n").count >= 1
+      customelogger(true, is_user_session_active, 'remove', user)
+      user "#{user}" do
+        action :remove
+        not_if { is_user_session_active }
+      end
+    }
+  else
+    Chef::Log.info("No invalid users found on the system")
+  end
+
 end
