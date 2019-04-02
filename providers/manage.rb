@@ -36,6 +36,41 @@ rescue NameError
   return false
 end
 
+def coupa_pay?
+  node['coupa-base']['deployment'].match(/pay/) ? true : false
+end
+
+def execute_command(cmd = nil)
+  require 'open3'
+  out, st = Open3.capture2e(cmd)
+  if st.success?
+    out
+  else
+    false
+  end
+end
+
+def customelogger(is_user_exists_on_system, is_user_session_active, custom_action, username, expiration_date = nil)
+  require 'logger'
+  logger = Logger.new("/var/log/secure-ssh.json")
+  logger.formatter = proc do |severity, datetime, progname, msg|
+    %Q|{timestamp: "#{datetime.to_s}", message: "#{msg}"}\n|
+  end
+
+  if is_user_exists_on_system && custom_action.to_s.eql?('remove')
+    if is_user_session_active
+      logger.info("User #{username} is having active session but expired at #{expiration_date}.")
+      Chef::Log.info("User #{username} is having active session but expired at #{expiration_date}.")
+    else
+      logger.info("Removing user #{username} from system, which got expired at #{expiration_date}.")
+      Chef::Log.info("Removing user #{username} from system, which got expired at #{expiration_date}.")
+    end
+  elsif !is_user_exists_on_system && custom_action.to_s.eql?('create')
+    logger.info("Creating user #{username} on system.")
+    Chef::Log.info("Creating user #{username} on system.")
+  end
+end
+
 action :remove do
   if Chef::Config[:solo] and not chef_solo_search_installed?
     Chef::Log.warn("This recipe uses search. Chef Solo does not support search unless you install the chef-solo-search cookbook.")
@@ -50,13 +85,13 @@ end
 
 action :create do
   security_group = Array.new
+  whitelist_groups = data_bag_item(node['coupa-base']['data_bag'], 'whitelist_groups') rescue []
 
   if Chef::Config[:solo] and not chef_solo_search_installed?
     Chef::Log.warn("This recipe uses search. Chef Solo does not support search unless you install the chef-solo-search cookbook.")
   else
     search(new_resource.data_bag, "groups:#{new_resource.search_group} AND NOT action:remove") do |u|
       u['username'] ||= u['id']
-      security_group << u['username']
 
       if node['apache'] and node['apache']['allowed_openids']
         Array(u['openid']).compact.each do |oid|
@@ -69,7 +104,7 @@ action :create do
       when 'mac_os_x'
           home_basedir = '/Users'
       when 'debian', 'rhel', 'fedora', 'arch', 'suse', 'freebsd'
-          home_basedir = '/home' 
+          home_basedir = '/home'
       end
 
       # Set home to location in data bag,
@@ -80,6 +115,22 @@ action :create do
         home_dir = "#{home_basedir}/#{u['username']}"
       end
 
+      is_user_active, is_deployment_match, is_role_match = [ true, true, true ]
+      if coupa_pay? && !whitelist_groups['group_list'].include?(new_resource.group_name)
+        # calculate action for group and user resources
+        is_user_active = u['expiration_date'] ? Time.parse(u['expiration_date']) >= Time.now : false
+
+        # checking for deployment matcher for specific user
+        is_deployment_match = u['match_deployments'] ? u['match_deployments'].include?(node['coupa-base']['deployment']) : true
+
+        # checking for role matcher for specific user
+        is_role_match = u['match_roles'] ? u['match_roles'].include?(node['coupa-base']['role']) : true
+      end
+
+      is_action_create = u['action'] ? u['action'].to_s.eql?('create') : true
+
+      custom_action = (is_user_active && is_action_create && is_deployment_match && is_role_match) ? :create : :remove
+
       # The user block will fail if the group does not yet exist.
       # See the -g option limitations in man 8 useradd for an explanation.
       # This should correct that without breaking functionality.
@@ -89,8 +140,12 @@ action :create do
         end
       end
 
-      # Create user object.
-      # Do NOT try to manage null home directories.
+      # checking if user session is active
+      is_user_session_active = execute_command("who | grep #{u['username']} | awk '{print $1}'").split("\n").count >= 1
+      is_user_exists_on_system = execute_command("id #{u['username']}") ? true : false
+
+      customelogger(is_user_exists_on_system, is_user_session_active, custom_action, u['username'], u['expiration_date'])
+
       user u['username'] do
         uid u['uid']
         if u['gid']
@@ -105,17 +160,21 @@ action :create do
           supports :manage_home => true
         end
         home home_dir
-        action u['action'] if u['action']
+        action custom_action
+        not_if { is_user_session_active && !custom_action.to_s.eql?('create') }
       end
 
-	if home_dir != "/dev/null"
-	  converge_by("would create #{home_dir}/.ssh") do
-	    directory "#{home_dir}/.ssh" do
-	      owner u['username']
-	      group u['gid'] || u['username']
-	      mode "0700"
-	  end
-	end
+      next unless is_user_active && is_action_create && is_deployment_match && is_role_match
+      security_group << u['username'] if u['groups'].include?(new_resource.group_name)
+
+    	if home_dir != "/dev/null"
+    	  converge_by("would create #{home_dir}/.ssh") do
+      	    directory "#{home_dir}/.ssh" do
+      	      owner u['username']
+      	      group u['gid'] || u['username']
+      	      mode "0700"
+      	  end
+      	end
 
         if u['ssh_keys']
           template "#{home_dir}/.ssh/authorized_keys" do
@@ -161,4 +220,29 @@ action :create do
     end
     members security_group
   end
+
+end
+
+action :remove_non_payment_groups do
+  valid_users = []
+  available_users = data_bag('users')
+  data_bag('groups').each do |group|
+    (valid_users << search(new_resource.data_bag, "groups:#{group} AND NOT action:remove").map {|u| u['id']}).flatten!
+  end
+  invalid_users = (available_users - valid_users.uniq)
+  unless invalid_users.empty?
+    invalid_users.each { |user|
+      is_user_exists_on_system = execute_command("id #{user}") ? true : false
+      next unless is_user_exists_on_system
+      is_user_session_active = execute_command("who | grep #{user} | awk '{print $1}'").split("\n").count >= 1
+      customelogger(true, is_user_session_active, 'remove', user)
+      user "#{user}" do
+        action :remove
+        not_if { is_user_session_active }
+      end
+    }
+  else
+    Chef::Log.info("No invalid users found on the system")
+  end
+
 end

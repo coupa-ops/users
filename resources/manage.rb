@@ -18,7 +18,7 @@
 #
 
 # Data bag user object needs an "action": "remove" tag to actually be removed by the action.
-actions :create, :remove
+actions :create, :remove, :remove_non_payment_groups
 
 # :data_bag is the object to search
 # :search_group is the groups name to search for, defaults to resource name
