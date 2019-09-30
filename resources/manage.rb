@@ -41,7 +41,7 @@ action :create do
               retries ||= 0
               if retries < max_retries
                 retries += 1
-                Chef::Log.error("Got 400 bad request on search - Retrying #{retries/max_retries}")
+                Chef::Log.error("Got 400 bad request on search - Retrying #{retries}/#{max_retries}")
                 retry
               else
                 Chef::Log.error(e.message)
@@ -192,7 +192,7 @@ action :remove do
               retries ||= 0
               if retries < max_retries
                 retries += 1
-                Chef::Log.error("Got 400 bad request on search - Retrying #{retries/max_retries}")
+                Chef::Log.error("Got 400 bad request on search - Retrying #{retries}/#{max_retries}")
                 retry
               else
                 Chef::Log.error(e.message)
