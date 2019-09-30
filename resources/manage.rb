@@ -32,8 +32,28 @@ property :manage_nfs_home_dirs, [true, false], default: true
 action :create do
   users_groups = {}
   users_groups[new_resource.group_name] = []
+  max_retries = Chef::Config[:http_retry_count]
+  Chef::Log.debug("Searching for users with query 'groups:#{new_resource.search_group} AND NOT action:remove' and #{max_retries} retry count")
+  users = begin
+            search(new_resource.data_bag, "groups:#{new_resource.search_group} AND NOT action:remove")
+          rescue Net::HTTPServerException => e
+            if e.response.code == '400'
+              retries ||= 0
+              if retries < max_retries
+                retries += 1
+                Chef::Log.error("Got 400 bad request on search - Retrying #{retries/max_retries}")
+                retry
+              else
+                Chef::Log.error(e.message)
+                raise e
+              end
+            else
+              Chef::Log.error(e.message)
+              raise e
+            end
+          end
 
-  search(new_resource.data_bag, "groups:#{new_resource.search_group} AND NOT action:remove") do |u|
+  users.each do |u|
     u['username'] ||= u['id']
     u['groups'].each do |g|
       users_groups[g] = [] unless users_groups.key?(g)
@@ -163,7 +183,28 @@ action :create do
 end
 
 action :remove do
-  search(new_resource.data_bag, "groups:#{new_resource.search_group} AND action:remove") do |rm_user|
+  max_retries = Chef::Config[:http_retry_count]
+  Chef::Log.debug("Searching for users with query 'groups:#{new_resource.search_group} AND action:remove' and #{max_retries} retry count")
+  users = begin
+            search(new_resource.data_bag, "groups:#{new_resource.search_group} AND action:remove")
+          rescue Net::HTTPServerException => e
+            if e.response.code == '400'
+              retries ||= 0
+              if retries < max_retries
+                retries += 1
+                Chef::Log.error("Got 400 bad request on search - Retrying #{retries/max_retries}")
+                retry
+              else
+                Chef::Log.error(e.message)
+                raise e
+              end
+            else
+              Chef::Log.error(e.message)
+              raise e
+            end
+          end
+
+  users.each do |rm_user|
     user rm_user['username'] ||= rm_user['id'] do
       action :remove
       force rm_user['force'] ||= false
