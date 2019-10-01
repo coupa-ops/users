@@ -32,27 +32,7 @@ property :manage_nfs_home_dirs, [true, false], default: true
 action :create do
   users_groups = {}
   users_groups[new_resource.group_name] = []
-  max_retries = Chef::Config[:http_retry_count]
-  Chef::Log.debug("Searching for users with query 'groups:#{new_resource.search_group} AND NOT action:remove' and #{max_retries} retry count")
-  users = begin
-            search(new_resource.data_bag, "groups:#{new_resource.search_group} AND NOT action:remove")
-          rescue Net::HTTPServerException => e
-            if e.response.code == '400'
-              retries ||= 0
-              if retries < max_retries
-                retries += 1
-                Chef::Log.error("Got 400 bad request on search - Retrying #{retries}/#{max_retries}")
-                retry
-              else
-                Chef::Log.error(e.message)
-                raise e
-              end
-            else
-              Chef::Log.error(e.message)
-              raise e
-            end
-          end
-
+  users = search_users(new_resource.data_bag, "groups:#{new_resource.search_group} AND NOT action:remove")
   users.each do |u|
     u['username'] ||= u['id']
     u['groups'].each do |g|
@@ -183,27 +163,7 @@ action :create do
 end
 
 action :remove do
-  max_retries = Chef::Config[:http_retry_count]
-  Chef::Log.debug("Searching for users with query 'groups:#{new_resource.search_group} AND action:remove' and #{max_retries} retry count")
-  users = begin
-            search(new_resource.data_bag, "groups:#{new_resource.search_group} AND action:remove")
-          rescue Net::HTTPServerException => e
-            if e.response.code == '400'
-              retries ||= 0
-              if retries < max_retries
-                retries += 1
-                Chef::Log.error("Got 400 bad request on search - Retrying #{retries}/#{max_retries}")
-                retry
-              else
-                Chef::Log.error(e.message)
-                raise e
-              end
-            else
-              Chef::Log.error(e.message)
-              raise e
-            end
-          end
-
+  users = search_users(new_resource.data_bag, "groups:#{new_resource.search_group} AND action:remove")
   users.each do |rm_user|
     user rm_user['username'] ||= rm_user['id'] do
       action :remove
@@ -226,5 +186,28 @@ action_class do
     else
       true
     end
+  end
+
+  def search_users(data_bag, query)
+    max_retries = Chef::Config[:http_retry_count]
+    Chef::Log.debug("Searching for users with query '#{query}' from data bag #{data_bag} and #{max_retries} retry count")
+    begin
+      search(data_bag, query)
+    rescue Net::HTTPServerException => e
+      if e.response.code == '400'
+        retries ||= 0
+        if retries < max_retries
+          retries += 1
+          Chef::Log.error("Got 400 bad request on search - Retrying #{retries}/#{max_retries}")
+          retry
+        else
+          Chef::Log.error(e.message)
+          raise e
+        end
+      else
+        Chef::Log.error(e.message)
+        raise e
+      end
+    end  
   end
 end
