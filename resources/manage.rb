@@ -198,14 +198,14 @@ action_class do
         retries ||= 0
         if retries < max_retries
           retries += 1
-          Chef::Log.error("Got 400 bad request on search - Retrying #{retries}/#{max_retries}")
+          Chef::Log.error("Got 400 bad request on '#{data_bag}' search with query '#{query}' - Retrying #{retries}/#{max_retries}")
           retry
         else
-          Chef::Log.error(e.message)
+          Chef::Log.error("Got 400 bad request on '#{data_bag}' search with query '#{query}' after #{max_retries} retries. Error - #{e.message}")
           raise e
         end
       else
-        Chef::Log.error(e.message)
+        Chef::Log.error("Got http #{e.response.code} on '#{data_bag}' search with query '#{query}'. Error - #{e.message}")
         raise e
       end
     end  
