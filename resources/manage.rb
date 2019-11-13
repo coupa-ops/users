@@ -31,6 +31,7 @@ property :manage_nfs_home_dirs, [true, false], default: true
 
 action :create do
   users_groups = {}
+  security_group = []
   whitelist_groups = data_bag_item(node['coupa-base']['data_bag'], 'whitelist_groups') rescue []
 
   users_groups[new_resource.group_name] = []
@@ -89,6 +90,7 @@ action :create do
     end
 
     next unless is_user_active && is_action_create && is_deployment_match && is_role_match
+    security_group << u['username'] if u['groups'].include?(new_resource.group_name)
 
     if manage_home_files?(home_dir, u['username'])
       Chef::Log.debug("Managing home files for #{u['username']}")
@@ -169,6 +171,7 @@ action :create do
     end
   end
 
+  g_members = coupa_pay? ? security_group : users_groups[new_resource.group_name]
   group new_resource.group_name do
     case node['platform_family']
     when 'mac_os_x'
@@ -176,7 +179,7 @@ action :create do
     else
       gid new_resource.group_id
     end
-    members users_groups[new_resource.group_name]
+    members g_members
   end
 end
 
