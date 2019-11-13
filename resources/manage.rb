@@ -88,6 +88,8 @@ action :create do
       not_if { is_user_session_active?(u['username']) && !custom_action.to_s.eql?('create') }
     end
 
+    next unless is_user_active && is_action_create && is_deployment_match && is_role_match
+
     if manage_home_files?(home_dir, u['username'])
       Chef::Log.debug("Managing home files for #{u['username']}")
 
@@ -155,13 +157,16 @@ action :create do
       Chef::Log.debug("Not managing home files for #{u['username']}")
     end
   end
-  # Populating users to appropriates groups
-  users_groups.each do |g, u|
-    group g do
-      members u
-      append true
-      action :manage # Do nothing if group doesn't exist
-    end unless g == new_resource.group_name # Dealing with managed group later
+
+  if !coupa_pay?
+    # Populating users to appropriates groups
+    users_groups.each do |g, u|
+      group g do
+        members u
+        append true
+        action :manage # Do nothing if group doesn't exist
+      end unless g == new_resource.group_name # Dealing with managed group later
+    end
   end
 
   group new_resource.group_name do
