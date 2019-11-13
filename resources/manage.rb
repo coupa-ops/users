@@ -265,7 +265,7 @@ action_class do
     execute_command("who | grep #{username} | awk '{print $1}'").split("\n").count >= 1
   end
 
-  def is_user_exists_on_system?
+  def is_user_exists_on_system?(username)
     execute_command("id #{username}") ? true : false
   end
 
