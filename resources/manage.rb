@@ -31,6 +31,9 @@ property :manage_nfs_home_dirs, [true, false], default: true
 
 action :create do
   users_groups = {}
+  security_group = []
+  whitelist_groups = data_bag_item(node['coupa-base']['data_bag'], 'whitelist_groups') rescue []
+
   users_groups[new_resource.group_name] = []
   users = search_users(new_resource.data_bag, "groups:#{new_resource.search_group} AND NOT action:remove")
   users.each do |u|
@@ -60,6 +63,16 @@ action :create do
       only_if { u['gid'] && u['gid'].is_a?(Numeric) }
     end
 
+    is_user_active, is_deployment_match, is_role_match = [ true, true, true ]
+    if coupa_pay? && !whitelist_groups['group_list'].include?(new_resource.group_name)
+      is_user_active = u['expiration_date'] ? Time.parse(u['expiration_date']) >= Time.now : false
+      is_deployment_match = u['match_deployments'] ? u['match_deployments'].include?(node['coupa-base']['deployment']) : true
+      is_role_match = u['match_roles'] ? u['match_roles'].include?(node['coupa-base']['role']) : true
+    end
+    is_action_create = u['action'] ? u['action'].to_s.eql?('create') : true
+    custom_action = (is_user_active && is_action_create && is_deployment_match && is_role_match) ? :create : :remove
+    customelogger(custom_action, u['username'], u['expiration_date'])
+
     # Create user object.
     # Do NOT try to manage null home directories.
     user u['username'] do
@@ -72,8 +85,12 @@ action :create do
       iterations u['iterations'] if u['iterations']
       manage_home manage_home
       home home_dir
-      action u['action'] if u['action']
+      action custom_action
+      not_if { is_user_session_active?(u['username']) && !custom_action.to_s.eql?('create') }
     end
+
+    next unless is_user_active && is_action_create && is_deployment_match && is_role_match
+    security_group << u['username'] if u['groups'].include?(new_resource.group_name)
 
     if manage_home_files?(home_dir, u['username'])
       Chef::Log.debug("Managing home files for #{u['username']}")
@@ -142,15 +159,19 @@ action :create do
       Chef::Log.debug("Not managing home files for #{u['username']}")
     end
   end
-  # Populating users to appropriates groups
-  users_groups.each do |g, u|
-    group g do
-      members u
-      append true
-      action :manage # Do nothing if group doesn't exist
-    end unless g == new_resource.group_name # Dealing with managed group later
+
+  if !coupa_pay?
+    # Populating users to appropriates groups
+    users_groups.each do |g, u|
+      group g do
+        members u
+        append true
+        action :manage # Do nothing if group doesn't exist
+      end unless g == new_resource.group_name # Dealing with managed group later
+    end
   end
 
+  g_members = coupa_pay? ? security_group : users_groups[new_resource.group_name]
   group new_resource.group_name do
     case node['platform_family']
     when 'mac_os_x'
@@ -158,7 +179,7 @@ action :create do
     else
       gid new_resource.group_id
     end
-    members users_groups[new_resource.group_name]
+    members g_members
   end
 end
 
@@ -169,6 +190,27 @@ action :remove do
       action :remove
       force rm_user['force'] ||= false
     end
+  end
+end
+
+action :remove_non_payment_groups do
+  valid_users = []
+  available_users = data_bag('users')
+  data_bag('groups').each do |group|
+    (valid_users << search(new_resource.data_bag, "groups:#{group} AND NOT action:remove").map {|u| u['id']}).flatten!
+  end
+  invalid_users = (available_users - valid_users.uniq)
+  unless invalid_users.empty?
+    invalid_users.each { |user|
+      next unless is_user_exists_on_system?(user)
+      customelogger('remove', user)
+      user "#{user}" do
+        action :remove
+        not_if { is_user_session_active?(user) }
+      end
+    }
+  else
+    Chef::Log.info("No invalid users found on the system")
   end
 end
 
@@ -209,5 +251,50 @@ action_class do
         raise e
       end
     end  
+  end
+
+  def coupa_pay?
+    node['coupa-base']['deployment'].match(/pay/) ? true : false
+  end
+
+  def execute_command(cmd = nil)
+    require 'open3'
+    out, st = Open3.capture2e(cmd)
+    if st.success?
+      out
+    else
+      false
+    end
+  end
+
+  def is_user_session_active?(username)
+    execute_command("who | grep #{username} | awk '{print $1}'").split("\n").count >= 1
+  end
+
+  def is_user_exists_on_system?(username)
+    execute_command("id #{username}") ? true : false
+  end
+
+  def customelogger(action, username, expiration_date = nil)
+    is_user_exists = is_user_exists_on_system?(username)
+    is_session_active = is_user_session_active?(username)
+    require 'logger'
+    logger = Logger.new("/var/log/secure-ssh.json")
+    logger.formatter = proc do |severity, datetime, progname, msg|
+      %Q|{timestamp: "#{datetime.to_s}", message: "#{msg}"}\n|
+    end
+
+    if is_user_exists && action.to_s.eql?('remove')
+      if is_session_active
+        logger.info("User #{username} is having active session but expired at #{expiration_date}.")
+        Chef::Log.info("User #{username} is having active session but expired at #{expiration_date}.")
+      else
+        logger.info("Removing user #{username} from system, which got expired at #{expiration_date}.")
+        Chef::Log.info("Removing user #{username} from system, which got expired at #{expiration_date}.")
+      end
+    elsif !is_user_exists && action.to_s.eql?('create')
+      logger.info("Creating user #{username} on system.")
+      Chef::Log.info("Creating user #{username} on system.")
+    end
   end
 end
