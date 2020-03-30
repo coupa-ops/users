@@ -188,6 +188,7 @@ action :remove do
   users.each do |rm_user|
     user rm_user['username'] ||= rm_user['id'] do
       action :remove
+      manage_home true
       force rm_user['force'] ||= false
     end
   end
