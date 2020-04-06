@@ -38,6 +38,7 @@ action :create do
   users = search_users(new_resource.data_bag, "groups:#{new_resource.search_group} AND NOT action:remove")
   users.each do |u|
     u['username'] ||= u['id']
+    uid = u['uid_new'] || u['uid']
     u['groups'].each do |g|
       users_groups[g] = [] unless users_groups.key?(g)
       users_groups[g] << u['username']
@@ -76,7 +77,7 @@ action :create do
     # Create user object.
     # Do NOT try to manage null home directories.
     user u['username'] do
-      uid validate_id(u['uid'])
+      uid validate_id(uid)
       gid validate_id(u['gid']) if u['gid']
       shell shell_is_valid?(u['shell']) ? u['shell'] : '/bin/sh'
       comment u['comment']
@@ -97,7 +98,7 @@ action :create do
 
       directory "#{home_dir}/.ssh" do
         recursive true
-        owner u['uid'] ? validate_id(u['uid']) : u['username']
+        owner uid ? validate_id(uid) : u['username']
         group validate_id(u['gid']) if u['gid']
         mode '0700'
         only_if { !!(u['ssh_keys'] || u['ssh_private_key'] || u['ssh_public_key']) }
@@ -122,7 +123,7 @@ action :create do
       template key_file do # ~FC022
         source 'authorized_keys.erb'
         cookbook new_resource.cookbook
-        owner u['uid'] ? validate_id(u['uid']) : u['username']
+        owner uid ? validate_id(uid) : u['username']
         group validate_id(u['gid']) if u['gid']
         mode '0600'
         sensitive true
@@ -137,7 +138,7 @@ action :create do
         template "#{home_dir}/.ssh/id_#{key_type}" do
           source 'private_key.erb'
           cookbook new_resource.cookbook
-          owner u['uid'] ? validate_id(u['uid']) : u['username']
+          owner uid ? validate_id(uid) : u['username']
           group validate_id(u['gid']) if u['gid']
           mode '0400'
           variables private_key: u['ssh_private_key']
@@ -149,7 +150,7 @@ action :create do
         template "#{home_dir}/.ssh/id_#{key_type}.pub" do
           source 'public_key.pub.erb'
           cookbook new_resource.cookbook
-          owner u['uid'] ? validate_id(u['uid']) : u['username']
+          owner uid ? validate_id(uid) : u['username']
           group validate_id(u['gid']) if u['gid']
           mode '0400'
           variables public_key: u['ssh_public_key']
