@@ -238,21 +238,17 @@ action_class do
     begin
       search(data_bag, query)
     rescue Net::HTTPServerException => e
-      if e.response.code == '400'
-        retries ||= 0
-        if retries < max_retries
-          retries += 1
-          Chef::Log.error("Got 400 bad request on '#{data_bag}' search with query '#{query}' - Retrying #{retries}/#{max_retries}")
-          retry
-        else
-          Chef::Log.error("Got 400 bad request on '#{data_bag}' search with query '#{query}' after #{max_retries} retries. Error - #{e.message}")
-          raise e
-        end
+      retries ||= 0
+      msg = "Got #{e.response.code}:Bad Request - search with query '#{query}' on databag '#{data_bag}'"
+      if retries < max_retries
+        retries += 1
+        Chef::Log.error("#{msg} - Retrying #{retries}/#{max_retries}")
+        retry
       else
-        Chef::Log.error("Got http #{e.response.code} on '#{data_bag}' search with query '#{query}'. Error - #{e.message}")
+        Chef::Log.error("#{msg} after #{max_retries} retries. Error - #{e.message}")
         raise e
       end
-    end  
+    end
   end
 
   def coupa_pay?
