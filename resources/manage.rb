@@ -239,7 +239,7 @@ action_class do
       search(data_bag, query)
     rescue Net::HTTPServerException => e
       retries ||= 0
-      msg = "Got #{e.response.code}:Bad Request - search with query '#{query}' on databag '#{data_bag}'"
+      msg = "Got #{e.response.code} for search with query '#{query}' on databag '#{data_bag}'"
       if retries < max_retries
         retries += 1
         Chef::Log.error("#{msg} - Retrying #{retries}/#{max_retries}")
