@@ -28,7 +28,7 @@ property :group_name, String, name_property: true
 property :group_id, Integer
 property :cookbook, String, default: 'users'
 property :manage_nfs_home_dirs, [true, false], default: true
-property :skip_users, Array, default: []
+property :keep_users, Array, default: []
 
 action :create do
   users_groups = {}
@@ -205,7 +205,7 @@ action :remove_if_created do
       manage_home true
       force rm_user['force'] ||= false
       not_if { is_user_session_active?(rm_user['username']) }
-      not_if { new_resource.skip_users.include?(rm_user['username']) }
+      not_if { new_resource.keep_users.include?(rm_user['username']) }
     end
   end
 end
